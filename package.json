@@ -4,8 +4,11 @@
   "description": "Live audio chat with 3D visuals",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc --project tsconfig.json",
-    "start": "echo \"Run a local server, e.g., npx serve .\""
+    "clean": "rm -rf dist",
+    "copy-assets": "mkdir -p dist && cp index.html dist/index.html && cp index.css dist/index.css && cp piz_compressed.exr dist/piz_compressed.exr",
+    "compile-ts": "tsc --project tsconfig.json",
+    "build": "npm run clean && npm run copy-assets && npm run compile-ts",
+    "start": "echo \"Run a local server, e.g., npx serve dist\""
   },
   "keywords": [
     "gemini",

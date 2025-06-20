@@ -53,7 +53,7 @@ export class GdmLiveAudioVisuals extends LitElement {
   }
 
   private visualize() {
-    if (this.canvas && this.outputAnalyser) {
+    if (this.canvas && this.outputAnalyser && this.inputAnalyser) {
       const canvas = this.canvas;
       const canvasCtx = this.canvasCtx;
 
@@ -101,7 +101,7 @@ export class GdmLiveAudioVisuals extends LitElement {
     requestAnimationFrame(() => this.visualize());
   }
 
-  private firstUpdated() {
+  protected firstUpdated() {
     this.canvas = this.shadowRoot!.querySelector('canvas');
     this.canvas.width = 400;
     this.canvas.height = 400;

@@ -1,0 +1,27 @@
+{
+  "name": "gdm-live-audio-app",
+  "version": "1.0.0",
+  "description": "Live audio chat with 3D visuals",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc --project tsconfig.json",
+    "start": "echo \"Run a local server, e.g., npx serve .\""
+  },
+  "keywords": [
+    "gemini",
+    "lit",
+    "threejs",
+    "audio",
+    "ai"
+  ],
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@google/genai": "^0.9.0",
+    "lit": "^3.3.0",
+    "three": "^0.176.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3"
+  }
+}

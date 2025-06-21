@@ -13,15 +13,13 @@ import './visual-3d';
 @customElement('gdm-live-audio')
 export class GdmLiveAudio extends LitElement {
   @state() isRecording = false;
-  @state() status = 'Tap to start';
+  @state() status = '';
   @state() error = '';
 
   private client: GoogleGenAI;
   private session: Session;
-  private inputAudioContext = new (window.AudioContext ||
-    (window as any).webkitAudioContext)({sampleRate: 16000});
-  private outputAudioContext = new (window.AudioContext ||
-    (window as any).webkitAudioContext)({sampleRate: 24000});
+  private inputAudioContext = new window.AudioContext({sampleRate: 16000});
+  private outputAudioContext = new window.AudioContext({sampleRate: 24000});
   @state() inputNode = this.inputAudioContext.createGain();
   @state() outputNode = this.outputAudioContext.createGain();
   private nextStartTime = 0;
@@ -31,90 +29,48 @@ export class GdmLiveAudio extends LitElement {
   private sources = new Set<AudioBufferSourceNode>();
 
   static styles = css`
-    :host {
-      display: block;
-      width: 100%;
-      height: 100%;
-      position: relative;
-    }
-
-    .status-container {
+    #status {
       position: absolute;
-      bottom: 100px; /* Above control bar */
-      left: 20px;
-      right: 20px;
+      bottom: 5vh;
+      left: 0;
+      right: 0;
       z-index: 10;
       text-align: center;
-      padding: 5px 10px;
-      font-size: 0.9em;
-      color: #FFFFFF;
-      text-shadow: 0 0 4px rgba(0, 0, 0, 0.7);
-      pointer-events: none; /* Allow clicks to pass through if needed */
     }
 
     .controls {
       z-index: 10;
-      position: fixed;
-      bottom: 0;
+      position: absolute;
+      bottom: 10vh;
       left: 0;
       right: 0;
-      height: 90px;
-      display: flex;
-      align-items: center;
-      justify-content: space-evenly;
-      padding: 0 20px;
-      background: rgba(25, 25, 25, 0.7);
-      backdrop-filter: blur(10px) saturate(180%);
-      -webkit-backdrop-filter: blur(10px) saturate(180%);
-      border-top: 1px solid rgba(255, 255, 255, 0.1);
-    }
-
-    .controls button {
-      outline: none;
-      border: none;
-      color: white;
-      border-radius: 50%; /* Circular buttons */
-      background: rgba(255, 255, 255, 0.15);
-      width: 56px;
-      height: 56px;
-      cursor: pointer;
-      font-size: 24px;
-      padding: 0;
-      margin: 0;
       display: flex;
       align-items: center;
       justify-content: center;
-      transition: background-color 0.2s ease, transform 0.1s ease;
-    }
+      flex-direction: column;
+      gap: 10px;
 
-    .controls button:hover {
-      background: rgba(255, 255, 255, 0.25);
-    }
+      button {
+        outline: none;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: white;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.1);
+        width: 64px;
+        height: 64px;
+        cursor: pointer;
+        font-size: 24px;
+        padding: 0;
+        margin: 0;
 
-    .controls button:active {
-      transform: scale(0.95);
-    }
-    
-    .controls button.record-toggle {
-      width: 68px; /* Larger primary button */
-      height: 68px;
-    }
+        &:hover {
+          background: rgba(255, 255, 255, 0.2);
+        }
+      }
 
-    .controls button.record-toggle.recording {
-      background-color: #D32F2F; /* Red when recording */
-    }
-    
-    .controls button.record-toggle.recording:hover {
-      background-color: #E53935;
-    }
-
-    .controls button svg {
-      display: block; /* Helps with sizing/alignment */
-    }
-
-    /* Hide disabled buttons instead of using disabled attribute for cleaner look */
-    .controls button.hidden {
-      display: none;
+      button[disabled] {
+        display: none;
+      }
     }
   `;
 
@@ -125,117 +81,72 @@ export class GdmLiveAudio extends LitElement {
 
   private initAudio() {
     this.nextStartTime = this.outputAudioContext.currentTime;
-    if (this.outputAudioContext.state === 'suspended') {
-      this.outputAudioContext.resume().catch(e => console.warn("Error resuming output audio context on init:", e));
-    }
-    if (this.inputAudioContext.state === 'suspended') {
-        this.inputAudioContext.resume().catch(e => console.warn("Error resuming input audio context on init:", e));
-    }
   }
 
   private async initClient() {
     this.initAudio();
 
-    const apiKey = process.env.API_KEY;
-    if (apiKey && apiKey.length > 5) { // Basic check for presence
-      console.log('API Key found, proceeding with client initialization.');
-    } else {
-      console.error('API Key NOT found or is too short. Please check environment variables in Vercel.');
-      this.updateError('Configuration Error: API Key not found. Please ensure it is set in Vercel environment variables.');
-      return; // Stop initialization if no API key
-    }
-
     this.client = new GoogleGenAI({
-      apiKey: apiKey,
+      apiKey: process.env.API_KEY,
     });
 
     this.outputNode.connect(this.outputAudioContext.destination);
+
     this.initSession();
   }
 
   private async initSession() {
     const model = 'gemini-2.5-flash-preview-native-audio-dialog';
-    console.log(`Initializing session with model: ${model}`);
 
     try {
       this.session = await this.client.live.connect({
         model: model,
         callbacks: {
           onopen: () => {
-            console.log('Session opened.');
-            this.updateStatus('Connected. Tap to speak.');
+            this.updateStatus('Opened');
           },
           onmessage: async (message: LiveServerMessage) => {
-            // console.log('Received server message:', JSON.stringify(message, null, 2));
-            try {
-              const audio =
-                message.serverContent?.modelTurn?.parts[0]?.inlineData;
+            const audio =
+              message.serverContent?.modelTurn?.parts[0]?.inlineData;
 
-              if (audio && audio.data) {
-                if (this.outputAudioContext.state === 'suspended') {
-                  console.log('Output AudioContext is suspended, attempting to resume before playback...');
-                  await this.outputAudioContext.resume();
-                }
+            if (audio) {
+              this.nextStartTime = Math.max(
+                this.nextStartTime,
+                this.outputAudioContext.currentTime,
+              );
 
-                this.nextStartTime = Math.max(
-                  this.nextStartTime,
-                  this.outputAudioContext.currentTime,
-                );
-                
-                console.log('Received audio data, attempting to decode and play...');
-                const decodedBytes = decode(audio.data); // Can throw if base64 is malformed
-                const audioBuffer = await decodeAudioData(
-                  decodedBytes,
-                  this.outputAudioContext,
-                  24000, // Output sample rate
-                  1,     // Number of channels
-                );
+              const audioBuffer = await decodeAudioData(
+                decode(audio.data),
+                this.outputAudioContext,
+                24000,
+                1,
+              );
+              const source = this.outputAudioContext.createBufferSource();
+              source.buffer = audioBuffer;
+              source.connect(this.outputNode);
+              source.addEventListener('ended', () =>{
+                this.sources.delete(source);
+              });
 
-                if (audioBuffer && audioBuffer.length > 0) {
-                  const source = this.outputAudioContext.createBufferSource();
-                  source.buffer = audioBuffer;
-                  source.connect(this.outputNode);
-                  source.addEventListener('ended', () =>{
-                    this.sources.delete(source);
-                    // console.log('Audio source finished playing.');
-                  });
+              source.start(this.nextStartTime);
+              this.nextStartTime = this.nextStartTime + audioBuffer.duration;
+              this.sources.add(source);
+            }
 
-                  source.start(this.nextStartTime);
-                  console.log(`Audio source started at: ${this.nextStartTime}, duration: ${audioBuffer.duration}s`);
-                  this.nextStartTime = this.nextStartTime + audioBuffer.duration;
-                  this.sources.add(source);
-                } else {
-                  console.warn('Decoded audio buffer is null or empty. Not playing.');
-                }
-              } else {
-                // console.log('No audio data in server message.');
+            const interrupted = message.serverContent?.interrupted;
+            if(interrupted) {
+              for(const source of this.sources.values()) {
+                source.stop();
+                this.sources.delete(source);
               }
-
-              const interrupted = message.serverContent?.interrupted;
-              if(interrupted) {
-                console.log('Audio output interrupted by server.');
-                for(const source of this.sources.values()) {
-                  source.stop(); // Stop all currently playing sources
-                  this.sources.delete(source);
-                }
-                this.nextStartTime = 0; // Reset next start time
-              }
-            } catch (e: any) {
-              console.error('Error processing server message for audio output:', e);
-              this.updateError(`Audio processing error: ${e.message || 'Unknown error'}`);
+              this.nextStartTime = 0;
             }
           },
-          onerror: (e: ErrorEvent) => { 
-            console.error('Session error event:', e);
-            let detailedErrorMessage = `Session Error: ${e.message || 'Unknown network or session error'}.`;
-            if (e.message && e.message.toLowerCase().includes('network error')) {
-              detailedErrorMessage += ' This can be due to internet connectivity, or issues with the API key/Google Cloud project (e.g., API not enabled, billing issues, key restrictions). Please check your connection, Vercel API_KEY, and Google Cloud project settings.';
-            }
-            this.updateError(detailedErrorMessage);
+          onerror: (e: ErrorEvent) => {
+            this.updateError(e.message);
           },
           onclose: (e: CloseEvent) => {
-            console.log(`Session closed. Code: ${e.code}, Reason: ${e.reason}, WasClean: ${e.wasClean}`);
-            this.updateStatus(`Closed: ${e.reason || 'Tap to reconnect'}`);
+            this.updateStatus('Close:' + e.reason);
           },
         },
         config: {
@@ -246,33 +157,17 @@ export class GdmLiveAudio extends LitElement {
           },
         },
       });
-    } catch (e: any) {
-      console.error("Connection/Session Initialization Failed:", e);
-      let initErrorMessage = `Connection failed: ${e.message || 'Unknown error during session init'}.`;
-       if (e.message && e.message.toLowerCase().includes('api key not valid')) {
-        initErrorMessage += ' Please verify your API_KEY in Vercel.';
-      }
-      this.updateError(initErrorMessage);
+    } catch (e) {
+      console.error(e);
     }
   }
 
   private updateStatus(msg: string) {
     this.status = msg;
-    this.error = ''; 
   }
 
   private updateError(msg: string) {
-    console.error("Application Error Updated:", msg);
     this.error = msg;
-    this.status = ''; 
-  }
-
-  private async toggleRecording() {
-    if (this.isRecording) {
-      this.stopRecording();
-    } else {
-      await this.startRecording();
-    }
   }
 
   private async startRecording() {
@@ -280,23 +175,9 @@ export class GdmLiveAudio extends LitElement {
       return;
     }
 
-    try {
-      if (this.inputAudioContext.state === 'suspended') {
-        console.log('Input AudioContext is suspended, attempting to resume...');
-        await this.inputAudioContext.resume();
-      }
-      if (this.outputAudioContext.state === 'suspended') { // Also ensure output context is live
-        console.log('Output AudioContext is suspended (on startRecord), attempting to resume...');
-        await this.outputAudioContext.resume();
-      }
-    } catch (e: any) {
-        console.error("Error resuming audio contexts on start:", e);
-        this.updateError(`Audio context resume error: ${e.message}`);
-        return;
-    }
+    this.inputAudioContext.resume();
 
-
-    this.updateStatus('Requesting mic...');
+    this.updateStatus('Requesting microphone access...');
 
     try {
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -304,15 +185,14 @@ export class GdmLiveAudio extends LitElement {
         video: false,
       });
 
-      this.updateStatus('Listening...');
-      console.log('Microphone access granted, listening...');
+      this.updateStatus('Microphone access granted. Starting capture...');
 
       this.sourceNode = this.inputAudioContext.createMediaStreamSource(
         this.mediaStream,
       );
       this.sourceNode.connect(this.inputNode);
 
-      const bufferSize = 256; 
+      const bufferSize = 256;
       this.scriptProcessorNode = this.inputAudioContext.createScriptProcessor(
         bufferSize,
         1,
@@ -320,129 +200,106 @@ export class GdmLiveAudio extends LitElement {
       );
 
       this.scriptProcessorNode.onaudioprocess = (audioProcessingEvent) => {
-        if (!this.isRecording) return; 
+        if (!this.isRecording) return;
 
         const inputBuffer = audioProcessingEvent.inputBuffer;
         const pcmData = inputBuffer.getChannelData(0);
 
-        if (this.session && this.session.sendRealtimeInput) {
-          this.session.sendRealtimeInput({media: createBlob(pcmData)});
-        }
+        this.session.sendRealtimeInput({media: createBlob(pcmData)});
       };
 
       this.sourceNode.connect(this.scriptProcessorNode);
-      // this.scriptProcessorNode.connect(this.inputAudioContext.destination); // Avoid echo
+      this.scriptProcessorNode.connect(this.inputAudioContext.destination);
 
       this.isRecording = true;
-    } catch (err: any) {
+      this.updateStatus('🔴 Recording... Capturing PCM chunks.');
+    } catch (err) {
       console.error('Error starting recording:', err);
-      this.updateError(`Mic error: ${err.message || 'Unknown microphone error'}`);
-      this.stopRecording(); 
+      this.updateStatus(`Error: ${err.message}`);
+      this.stopRecording();
     }
   }
 
   private stopRecording() {
-    if (!this.isRecording && !this.mediaStream && !this.inputAudioContext) {
-        if(this.isRecording) this.isRecording = false; 
-        return;
-    }
-    
-    if (this.isRecording) {
-       console.log('Stopping recording...');
-       // this.updateStatus('Processing...'); // Keep "Tap to speak" or error message
-    }
+    if (!this.isRecording && !this.mediaStream && !this.inputAudioContext)
+      return;
+
+    this.updateStatus('Stopping recording...');
+
     this.isRecording = false;
 
-    if (this.scriptProcessorNode) {
+    if (this.scriptProcessorNode && this.sourceNode && this.inputAudioContext) {
       this.scriptProcessorNode.disconnect();
-      this.scriptProcessorNode.onaudioprocess = null; 
-      this.scriptProcessorNode = null;
-    }
-    if (this.sourceNode) {
       this.sourceNode.disconnect();
-      this.sourceNode = null;
     }
+
+    this.scriptProcessorNode = null;
+    this.sourceNode = null;
 
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach((track) => track.stop());
       this.mediaStream = null;
-      console.log('Microphone stream stopped.');
     }
-    
-    if (this.status === 'Listening...' || this.status === 'Requesting mic...' || this.status === 'Processing...') {
-        this.updateStatus('Tap to speak');
-    }
+
+    this.updateStatus('Recording stopped. Click Start to begin again.');
   }
 
-  private resetSession() {
-    console.log('Resetting session...');
-    this.stopRecording(); 
-    this.session?.close(); // Close existing session if any
-    
-    // Clear any pending audio sources
-    for(const source of this.sources.values()) {
-        source.stop();
-        this.sources.delete(source);
-    }
-    this.nextStartTime = 0;
-    
-    this.updateStatus('Resetting session...');
-    setTimeout(() => {
-        this.initSession(); // Re-initialize the session
-    }, 250); // Small delay for cleanup and to avoid race conditions
+  private reset() {
+    this.session?.close();
+    this.initSession();
+    this.updateStatus('Session cleared.');
   }
 
   render() {
-    const messageToDisplay = this.error || this.status;
-
-    const recordIcon = html`
-      <svg xmlns="http://www.w3.org/2000/svg" height="32px" viewBox="0 -960 960 960" width="32px" fill="#FFFFFF">
-        <path d="M480-400q-50 0-85-35t-35-85v-200q0-50 35-85t85-35q50 0 85 35t35 85v200q0 50-35 85t-85 35Zm0-80q17 0 28.5-11.5T520-520v-200q0-17-11.5-28.5T480-760q-17 0-28.5 11.5T440-720v200q0 17 11.5 28.5T480-480Zm0 280q-83 0-156-31.5T197-297q-22-22-22.5-54.5T197-406l24-24q11-11 28-11t28.5 11.5Q289-418 297.5-399t8.5-40q36-66 104-97.5T520-568q86 0 152 32.5T776-438q12 18 12.5 39.5T778-359q11 11 10.5 27.5T760-303l-25 25q-21 21-53 21.5T628-278q-44 44-100 65.5T480-200Z"/>
-      </svg>
-    `;
-
-    const stopIcon = html`
-      <svg viewBox="0 0 100 100" width="32px" height="32px" fill="#FFFFFF" xmlns="http://www.w3.org/2000/svg">
-        <rect x="15" y="15" width="70" height="70" rx="10" />
-      </svg>
-    `;
-    
-    const resetIcon = html`
-      <svg xmlns="http://www.w3.org/2000/svg" height="28px" viewBox="0 -960 960 960" width="28px" fill="#FFFFFF">
-        <path d="M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q69 0 132 28.5T720-690v-110h80v280H520v-80h168q-32-56-87.5-88T480-720q-100 0-170 70t-70 170q0 100 70 170t170 70q77 0 139-44t87-116h84q-28 106-114 173t-196 67Z" />
-      </svg>
-    `;
-
     return html`
-      <div class="app-container">
-        <gdm-live-audio-visuals-3d
-          .inputNode=${this.inputNode}
-          .outputNode=${this.outputNode}></gdm-live-audio-visuals-3d>
-        
-        <div class="status-container">
-          ${messageToDisplay}
-        </div>
-
+      <div>
         <div class="controls">
           <button
             id="resetButton"
-            @click=${this.resetSession}
-            class="${this.isRecording ? 'hidden' : ''}"
-            aria-label="Reset Session"
-            title="Reset Session">
-            ${resetIcon}
+            @click=${this.reset}
+            ?disabled=${this.isRecording}>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              height="40px"
+              viewBox="0 -960 960 960"
+              width="40px"
+              fill="#ffffff">
+              <path
+                d="M480-160q-134 0-227-93t-93-227q0-134 93-227t227-93q69 0 132 28.5T720-690v-110h80v280H520v-80h168q-32-56-87.5-88T480-720q-100 0-170 70t-70 170q0 100 70 170t170 70q77 0 139-44t87-116h84q-28 106-114 173t-196 67Z" />
+            </svg>
           </button>
           <button
-            id="recordToggleButton"
-            class="record-toggle ${this.isRecording ? 'recording' : ''}"
-            @click=${this.toggleRecording}
-            aria-label=${this.isRecording ? 'Stop Recording' : 'Start Recording'}
-            title=${this.isRecording ? 'Stop Recording' : 'Start Recording'}>
-            ${this.isRecording ? stopIcon : recordIcon}
+            id="startButton"
+            @click=${this.startRecording}
+            ?disabled=${this.isRecording}>
+            <svg
+              viewBox="0 0 100 100"
+              width="32px"
+              height="32px"
+              fill="#c80000"
+              xmlns="http://www.w3.org/2000/svg">
+              <circle cx="50" cy="50" r="50" />
+            </svg>
           </button>
-          <!-- Placeholder for potential third button, keeps toggle centered if reset is hidden -->
-          <div style="width: 56px; height: 56px;" class="${!this.isRecording ? 'hidden' : ''}"></div>
+          <button
+            id="stopButton"
+            @click=${this.stopRecording}
+            ?disabled=${!this.isRecording}>
+            <svg
+              viewBox="0 0 100 100"
+              width="32px"
+              height="32px"
+              fill="#000000"
+              xmlns="http://www.w3.org/2000/svg">
+              <rect x="0" y="0" width="100" height="100" rx="15" />
+            </svg>
+          </button>
         </div>
+
+        <div id="status"> ${this.error || this.status} </div>
+        <gdm-live-audio-visuals-3d
+          .inputNode=${this.inputNode}
+          .outputNode=${this.outputNode}></gdm-live-audio-visuals-3d>
       </div>
     `;
   }

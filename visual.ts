@@ -53,7 +53,7 @@ export class GdmLiveAudioVisuals extends LitElement {
   }
 
   private visualize() {
-    if (this.canvas && this.outputAnalyser && this.inputAnalyser) {
+    if (this.canvas && this.outputAnalyser) {
       const canvas = this.canvas;
       const canvasCtx = this.canvasCtx;
 

@@ -1,30 +1,22 @@
 {
-  "name": "gdm-live-audio-app",
-  "version": "1.0.0",
-  "description": "Live audio chat with 3D visuals",
-  "main": "dist/index.js",
+  "name": "live-audio",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
   "scripts": {
-    "clean": "rm -rf dist",
-    "copy-assets": "if [ ! -f ./piz_compressed.exr ]; then echo 'ERROR: ./piz_compressed.exr not found in the project root!' >&2; exit 1; fi && mkdir -p dist && cp ./index.html dist/index.html && cp ./index.css dist/index.css && cp ./piz_compressed.exr dist/piz_compressed.exr",
-    "compile-ts": "tsc --project tsconfig.json",
-    "build": "npm run clean && npm run copy-assets && npm run compile-ts",
-    "start": "echo \"Run a local server, e.g., npx serve dist\""
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
-  "keywords": [
-    "gemini",
-    "lit",
-    "threejs",
-    "audio",
-    "ai"
-  ],
-  "author": "",
-  "license": "Apache-2.0",
   "dependencies": {
-    "@google/genai": "^0.9.0",
     "lit": "^3.3.0",
+    "@lit/context": "^1.1.5",
+    "@google/genai": "^0.9.0",
     "three": "^0.176.0"
   },
   "devDependencies": {
-    "typescript": "^5.3.3"
+    "@types/node": "^22.14.0",
+    "typescript": "~5.7.2",
+    "vite": "^6.2.0"
   }
 }

@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "clean": "rm -rf dist",
-    "copy-assets": "if [ ! -f piz_compressed.exr ]; then echo 'ERROR: piz_compressed.exr not found in the project root!' >&2; exit 1; fi && mkdir -p dist && cp index.html dist/index.html && cp index.css dist/index.css && cp piz_compressed.exr dist/piz_compressed.exr",
+    "copy-assets": "if [ ! -f ./piz_compressed.exr ]; then echo 'ERROR: ./piz_compressed.exr not found in the project root!' >&2; exit 1; fi && mkdir -p dist && cp ./index.html dist/index.html && cp ./index.css dist/index.css && cp ./piz_compressed.exr dist/piz_compressed.exr",
     "compile-ts": "tsc --project tsconfig.json",
     "build": "npm run clean && npm run copy-assets && npm run compile-ts",
     "start": "echo \"Run a local server, e.g., npx serve dist\""

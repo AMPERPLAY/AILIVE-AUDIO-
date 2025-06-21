@@ -1,3 +1,4 @@
+
 /* tslint:disable */
 /**
  * @license
@@ -86,13 +87,12 @@ export class GdmLiveAudio extends LitElement {
   private async initClient() {
     this.initAudio();
 
-    // Log the API_KEY for debugging purposes
     console.log('[DEBUG] Attempting to use API_KEY from process.env:', process.env.API_KEY);
 
     if (!process.env.API_KEY) {
       this.updateError('API_KEY is not available. Please ensure it is configured correctly in your environment variables and accessible to the client-side code.');
       console.error('[GDM Live Audio] CRITICAL: process.env.API_KEY is undefined or empty. The application will not function correctly.');
-      // The GoogleGenAI constructor will likely fail below, and its error will also be caught.
+      return; 
     }
     
     try {
@@ -112,9 +112,11 @@ export class GdmLiveAudio extends LitElement {
   private async initSession() {
     if (!this.client) {
       this.updateError('Gemini client not initialized. Cannot create session.');
+      console.error('[GDM Live Audio] Gemini client not available for session initialization.');
       return;
     }
     const model = 'gemini-2.5-flash-preview-native-audio-dialog';
+    console.log('[GDM Live Audio] Initializing session with model:', model);
 
     try {
       this.session = await this.client.live.connect({
@@ -122,37 +124,66 @@ export class GdmLiveAudio extends LitElement {
         callbacks: {
           onopen: () => {
             this.updateStatus('Connection Opened');
+            console.log('[GDM Live Audio] Session: Connection Opened.');
           },
           onmessage: async (message: LiveServerMessage) => {
+            console.log('[GDM Live Audio] Session: Message received:', JSON.stringify(message, null, 2));
             const audio =
               message.serverContent?.modelTurn?.parts[0]?.inlineData;
 
-            if (audio) {
-              this.nextStartTime = Math.max(
-                this.nextStartTime,
-                this.outputAudioContext.currentTime,
-              );
+            if (audio && audio.data) {
+              console.log('[GDM Live Audio] Session: Audio data found in message.');
+              
+              // Ensure output audio context is running
+              if (this.outputAudioContext.state === 'suspended') {
+                console.log('[GDM Live Audio] Output audio context is suspended, attempting to resume.');
+                await this.outputAudioContext.resume();
+              }
+              
+              if (this.outputAudioContext.state === 'running') {
+                console.log('[GDM Live Audio] Output audio context is running.');
+                this.nextStartTime = Math.max(
+                  this.nextStartTime,
+                  this.outputAudioContext.currentTime,
+                );
+                console.log(`[GDM Live Audio] Next start time for audio: ${this.nextStartTime}`);
 
-              const audioBuffer = await decodeAudioData(
-                decode(audio.data),
-                this.outputAudioContext,
-                24000,
-                1,
-              );
-              const source = this.outputAudioContext.createBufferSource();
-              source.buffer = audioBuffer;
-              source.connect(this.outputNode);
-              source.addEventListener('ended', () =>{
-                this.sources.delete(source);
-              });
+                try {
+                  const audioBuffer = await decodeAudioData(
+                    decode(audio.data),
+                    this.outputAudioContext,
+                    24000, // Expected sample rate from Gemini for this model
+                    1,     // Expected number of channels
+                  );
+                  console.log(`[GDM Live Audio] Audio decoded. Buffer duration: ${audioBuffer.duration}`);
+                  
+                  const source = this.outputAudioContext.createBufferSource();
+                  source.buffer = audioBuffer;
+                  source.connect(this.outputNode);
+                  source.addEventListener('ended', () =>{
+                    console.log('[GDM Live Audio] Audio source ended.');
+                    this.sources.delete(source);
+                  });
 
-              source.start(this.nextStartTime);
-              this.nextStartTime = this.nextStartTime + audioBuffer.duration;
-              this.sources.add(source);
+                  source.start(this.nextStartTime);
+                  console.log(`[GDM Live Audio] Audio source started at: ${this.nextStartTime}`);
+                  this.nextStartTime = this.nextStartTime + audioBuffer.duration;
+                  this.sources.add(source);
+                } catch (decodeError) {
+                  console.error('[GDM Live Audio] Error decoding audio data:', decodeError);
+                  this.updateError(`Error processing received audio: ${decodeError.message}`);
+                }
+              } else {
+                console.warn('[GDM Live Audio] Output audio context is not running. Cannot play audio.');
+                this.updateError('Audio output context is not active.');
+              }
+            } else {
+              console.log('[GDM Live Audio] Session: No audio data in current message part.');
             }
 
             const interrupted = message.serverContent?.interrupted;
             if(interrupted) {
+              console.log('[GDM Live Audio] Session: Interrupted signal received. Stopping current audio playback.');
               for(const source of this.sources.values()) {
                 source.stop();
                 this.sources.delete(source);
@@ -160,37 +191,43 @@ export class GdmLiveAudio extends LitElement {
               this.nextStartTime = 0;
             }
           },
-          onerror: (e: ErrorEvent) => { // ErrorEvent might not have e.message directly, but is a standard type
-            this.updateError(`Session error: ${e.type || 'Unknown error'}`);
-            console.error('Session onerror:', e);
+          onerror: (e: ErrorEvent) => { 
+            // ErrorEvent is a bit generic. Try to get more info.
+            const errorDetails = e.message || (e.error ? e.error.message : e.type || 'Unknown session error');
+            this.updateError(`Session error: ${errorDetails}`);
+            console.error('[GDM Live Audio] Session onerror:', e, 'Details:', errorDetails);
           },
           onclose: (e: CloseEvent) => {
-            this.updateStatus(`Connection Closed: ${e.reason || 'No reason provided'} (Code: ${e.code})`);
-            console.warn('Session onclose:', e);
+            const reason = e.reason || 'No reason provided';
+            this.updateStatus(`Connection Closed: ${reason} (Code: ${e.code}, Clean: ${e.wasClean})`);
+            console.warn(`[GDM Live Audio] Session onclose: Code=${e.code}, Reason=${reason}, WasClean=${e.wasClean}`, e);
           },
         },
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
             voiceConfig: {prebuiltVoiceConfig: {voiceName: 'Orus'}},
-            // languageCode: 'en-GB'
+            // languageCode: 'en-GB' // Example, if you want to specify language
           },
         },
       });
+      console.log('[GDM Live Audio] Session object created:', this.session);
+      this.updateStatus('Session initialized. Ready to start.');
     } catch (e) {
       this.updateError(`Failed to initialize session: ${e.message}`);
-      console.error('Error initializing session:', e);
+      console.error('[GDM Live Audio] Error initializing session:', e);
     }
   }
 
   private updateStatus(msg: string) {
     this.status = msg;
-    this.error = ''; // Clear previous errors if status updates
+    this.error = ''; 
+    console.log(`[GDM Live Audio] Status: ${msg}`);
   }
 
   private updateError(msg: string) {
     this.error = `Error: ${msg}`;
-    this.status = ''; // Clear status if error occurs
+    this.status = ''; 
     console.error(`[GDM Live Audio] ${this.error}`);
   }
 
@@ -204,7 +241,25 @@ export class GdmLiveAudio extends LitElement {
       return;
     }
     
-    this.inputAudioContext.resume();
+    // Ensure both contexts are running
+    if (this.inputAudioContext.state === 'suspended') {
+      console.log('[GDM Live Audio] Input audio context is suspended, attempting to resume.');
+      await this.inputAudioContext.resume();
+    }
+    if (this.outputAudioContext.state === 'suspended') {
+      console.log('[GDM Live Audio] Output audio context is suspended, attempting to resume.');
+      await this.outputAudioContext.resume();
+    }
+
+    if (this.inputAudioContext.state !== 'running') {
+        this.updateError('Input audio context could not be started. Microphone may be blocked or unavailable.');
+        return;
+    }
+     if (this.outputAudioContext.state !== 'running') {
+        this.updateError('Output audio context could not be started.');
+        // Potentially less critical to block recording, but good to note
+    }
+
 
     this.updateStatus('Requesting microphone access...');
 
@@ -215,83 +270,110 @@ export class GdmLiveAudio extends LitElement {
       });
 
       this.updateStatus('Microphone access granted. Starting capture...');
+      console.log('[GDM Live Audio] Microphone access granted.');
 
       this.sourceNode = this.inputAudioContext.createMediaStreamSource(
         this.mediaStream,
       );
       this.sourceNode.connect(this.inputNode);
 
-      const bufferSize = 256;
+      const bufferSize = 256; // Consider adjusting if needed, though 256 is small and good for low latency
       this.scriptProcessorNode = this.inputAudioContext.createScriptProcessor(
         bufferSize,
-        1,
-        1,
+        1, // input channels
+        1, // output channels
       );
 
       this.scriptProcessorNode.onaudioprocess = (audioProcessingEvent) => {
-        if (!this.isRecording || !this.session) return; // Add session check
+        if (!this.isRecording || !this.session) return; 
 
         const inputBuffer = audioProcessingEvent.inputBuffer;
         const pcmData = inputBuffer.getChannelData(0);
         
         try {
-            this.session.sendRealtimeInput({media: createBlob(pcmData)});
+            if (this.session && this.isRecording) { // Double check
+                 this.session.sendRealtimeInput({media: createBlob(pcmData)});
+            }
         } catch (e) {
-            console.error("Error sending realtime input:", e);
+            console.error("[GDM Live Audio] Error sending realtime input:", e);
             this.updateError(`Error sending audio: ${e.message}. Try resetting.`);
-            this.stopRecording(); // Stop if sending fails
+            this.stopRecording(); 
         }
       };
 
       this.sourceNode.connect(this.scriptProcessorNode);
-      this.scriptProcessorNode.connect(this.inputAudioContext.destination);
+      // It's common to connect scriptProcessorNode to destination if you want to hear your own raw input,
+      // but usually not needed if you only expect processed output from Gemini.
+      // For this app, let's not connect it to destination to avoid echo unless intended.
+      // this.scriptProcessorNode.connect(this.inputAudioContext.destination); 
+      // Instead, ensure the graph is valid by connecting to a GainNode that might go nowhere if not needed for playback.
+      // Or, if the Gemini SDK handles its own input processing without needing this node to connect to destination, this is fine.
+      // The crucial part is that onaudioprocess fires.
 
       this.isRecording = true;
       this.updateStatus('🔴 Recording... Capturing PCM chunks.');
+      console.log('[GDM Live Audio] Recording started. Script processor active.');
     } catch (err) {
-      console.error('Error starting recording:', err);
-      this.updateError(`Failed to start recording: ${err.message}`);
-      this.stopRecording(); // Clean up if start failed
+      console.error('[GDM Live Audio] Error starting recording:', err);
+      this.updateError(`Failed to start recording: ${err.message}. Check microphone permissions.`);
+      this.stopRecording(); 
     }
   }
 
   private stopRecording() {
-    if (!this.isRecording && !this.mediaStream && !this.inputAudioContext)
+    if (!this.isRecording && !this.mediaStream && !this.inputAudioContext && !this.scriptProcessorNode) {
+      console.log('[GDM Live Audio] Stop recording called, but not in a state to stop anything significant.');
       return;
+    }
+      
 
     this.updateStatus('Stopping recording...');
+    console.log('[GDM Live Audio] Stopping recording.');
 
     this.isRecording = false;
 
-    if (this.scriptProcessorNode && this.sourceNode && this.inputAudioContext) {
+    if (this.scriptProcessorNode) {
       this.scriptProcessorNode.disconnect();
-      this.sourceNode.disconnect();
+      this.scriptProcessorNode.onaudioprocess = null; // Remove handler
+      this.scriptProcessorNode = null;
+      console.log('[GDM Live Audio] Script processor disconnected.');
     }
-
-    this.scriptProcessorNode = null;
-    this.sourceNode = null;
+    
+    if (this.sourceNode) {
+      this.sourceNode.disconnect();
+      this.sourceNode = null;
+      console.log('[GDM Live Audio] Source node disconnected.');
+    }
 
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach((track) => track.stop());
       this.mediaStream = null;
+      console.log('[GDM Live Audio] Media stream tracks stopped.');
     }
+    
+    // Optional: Suspend audio context if no longer needed to save resources, but might need resume on next start
+    // if (this.inputAudioContext.state === 'running') this.inputAudioContext.suspend();
 
     this.updateStatus('Recording stopped. Click Start to begin again.');
   }
 
   private reset() {
     this.updateStatus('Resetting session...');
+    console.log('[GDM Live Audio] Resetting session.');
     this.stopRecording(); 
     if (this.session) {
        try {
         this.session.close();
+        console.log('[GDM Live Audio] Existing session closed.');
        } catch (e) {
-        console.warn("Error closing existing session during reset:", e);
+        console.warn("[GDM Live Audio] Error closing existing session during reset:", e);
        }
        this.session = null; 
     }
-    // Re-initialize session after a brief delay
+    // Re-initialize client and session after a brief delay
+    // This also re-initializes audio contexts implicitly if they were part of initAudio
     setTimeout(() => {
+      console.log('[GDM Live Audio] Re-initializing client and session after reset.');
       this.initClient(); // Re-init client which will then re-init session
     }, 250);
   }
@@ -353,3 +435,4 @@ export class GdmLiveAudio extends LitElement {
     `;
   }
 }
+

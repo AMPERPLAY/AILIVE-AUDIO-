@@ -302,14 +302,10 @@ export class GdmLiveAudio extends LitElement {
       };
 
       this.sourceNode.connect(this.scriptProcessorNode);
-      // It's common to connect scriptProcessorNode to destination if you want to hear your own raw input,
-      // but usually not needed if you only expect processed output from Gemini.
-      // For this app, let's not connect it to destination to avoid echo unless intended.
-      // this.scriptProcessorNode.connect(this.inputAudioContext.destination); 
-      // Instead, ensure the graph is valid by connecting to a GainNode that might go nowhere if not needed for playback.
-      // Or, if the Gemini SDK handles its own input processing without needing this node to connect to destination, this is fine.
-      // The crucial part is that onaudioprocess fires.
-
+      // Connect scriptProcessorNode to destination to ensure onaudioprocess fires.
+      // This might cause you to hear your own microphone input.
+      this.scriptProcessorNode.connect(this.inputAudioContext.destination); 
+      
       this.isRecording = true;
       this.updateStatus('🔴 Recording... Capturing PCM chunks.');
       console.log('[GDM Live Audio] Recording started. Script processor active.');
@@ -435,4 +431,3 @@ export class GdmLiveAudio extends LitElement {
     `;
   }
 }
-

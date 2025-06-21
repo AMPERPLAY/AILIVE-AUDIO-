@@ -24,7 +24,7 @@ export class GdmLiveAudio extends LitElement {
   @state() outputNode = this.outputAudioContext.createGain();
   private nextStartTime = 0;
   private mediaStream: MediaStream;
-  private sourceNode: AudioBufferSourceNode;
+  private sourceNode: MediaStreamAudioSourceNode; // Corrected type
   private scriptProcessorNode: ScriptProcessorNode;
   private sources = new Set<AudioBufferSourceNode>();
 
@@ -86,16 +86,34 @@ export class GdmLiveAudio extends LitElement {
   private async initClient() {
     this.initAudio();
 
-    this.client = new GoogleGenAI({
-      apiKey: process.env.API_KEY,
-    });
+    // Log the API_KEY for debugging purposes
+    console.log('[DEBUG] Attempting to use API_KEY from process.env:', process.env.API_KEY);
 
-    this.outputNode.connect(this.outputAudioContext.destination);
+    if (!process.env.API_KEY) {
+      this.updateError('API_KEY is not available. Please ensure it is configured correctly in your environment variables and accessible to the client-side code.');
+      console.error('[GDM Live Audio] CRITICAL: process.env.API_KEY is undefined or empty. The application will not function correctly.');
+      // The GoogleGenAI constructor will likely fail below, and its error will also be caught.
+    }
+    
+    try {
+      this.client = new GoogleGenAI({
+        apiKey: process.env.API_KEY,
+      });
 
-    this.initSession();
+      this.outputNode.connect(this.outputAudioContext.destination);
+      this.initSession();
+
+    } catch (e) {
+      this.updateError(`Failed to initialize GoogleGenAI client: ${e.message}. This usually indicates an issue with the API Key.`);
+      console.error('Error initializing GoogleGenAI client:', e);
+    }
   }
 
   private async initSession() {
+    if (!this.client) {
+      this.updateError('Gemini client not initialized. Cannot create session.');
+      return;
+    }
     const model = 'gemini-2.5-flash-preview-native-audio-dialog';
 
     try {
@@ -103,7 +121,7 @@ export class GdmLiveAudio extends LitElement {
         model: model,
         callbacks: {
           onopen: () => {
-            this.updateStatus('Opened');
+            this.updateStatus('Connection Opened');
           },
           onmessage: async (message: LiveServerMessage) => {
             const audio =
@@ -142,11 +160,13 @@ export class GdmLiveAudio extends LitElement {
               this.nextStartTime = 0;
             }
           },
-          onerror: (e: ErrorEvent) => {
-            this.updateError(e.message);
+          onerror: (e: ErrorEvent) => { // ErrorEvent might not have e.message directly, but is a standard type
+            this.updateError(`Session error: ${e.type || 'Unknown error'}`);
+            console.error('Session onerror:', e);
           },
           onclose: (e: CloseEvent) => {
-            this.updateStatus('Close:' + e.reason);
+            this.updateStatus(`Connection Closed: ${e.reason || 'No reason provided'} (Code: ${e.code})`);
+            console.warn('Session onclose:', e);
           },
         },
         config: {
@@ -158,16 +178,20 @@ export class GdmLiveAudio extends LitElement {
         },
       });
     } catch (e) {
-      console.error(e);
+      this.updateError(`Failed to initialize session: ${e.message}`);
+      console.error('Error initializing session:', e);
     }
   }
 
   private updateStatus(msg: string) {
     this.status = msg;
+    this.error = ''; // Clear previous errors if status updates
   }
 
   private updateError(msg: string) {
-    this.error = msg;
+    this.error = `Error: ${msg}`;
+    this.status = ''; // Clear status if error occurs
+    console.error(`[GDM Live Audio] ${this.error}`);
   }
 
   private async startRecording() {
@@ -175,6 +199,11 @@ export class GdmLiveAudio extends LitElement {
       return;
     }
 
+    if (!this.session) {
+      this.updateError('Session not initialized. Cannot start recording. Check API Key and network, then try resetting.');
+      return;
+    }
+    
     this.inputAudioContext.resume();
 
     this.updateStatus('Requesting microphone access...');
@@ -200,12 +229,18 @@ export class GdmLiveAudio extends LitElement {
       );
 
       this.scriptProcessorNode.onaudioprocess = (audioProcessingEvent) => {
-        if (!this.isRecording) return;
+        if (!this.isRecording || !this.session) return; // Add session check
 
         const inputBuffer = audioProcessingEvent.inputBuffer;
         const pcmData = inputBuffer.getChannelData(0);
-
-        this.session.sendRealtimeInput({media: createBlob(pcmData)});
+        
+        try {
+            this.session.sendRealtimeInput({media: createBlob(pcmData)});
+        } catch (e) {
+            console.error("Error sending realtime input:", e);
+            this.updateError(`Error sending audio: ${e.message}. Try resetting.`);
+            this.stopRecording(); // Stop if sending fails
+        }
       };
 
       this.sourceNode.connect(this.scriptProcessorNode);
@@ -215,8 +250,8 @@ export class GdmLiveAudio extends LitElement {
       this.updateStatus('🔴 Recording... Capturing PCM chunks.');
     } catch (err) {
       console.error('Error starting recording:', err);
-      this.updateStatus(`Error: ${err.message}`);
-      this.stopRecording();
+      this.updateError(`Failed to start recording: ${err.message}`);
+      this.stopRecording(); // Clean up if start failed
     }
   }
 
@@ -245,9 +280,20 @@ export class GdmLiveAudio extends LitElement {
   }
 
   private reset() {
-    this.session?.close();
-    this.initSession();
-    this.updateStatus('Session cleared.');
+    this.updateStatus('Resetting session...');
+    this.stopRecording(); 
+    if (this.session) {
+       try {
+        this.session.close();
+       } catch (e) {
+        console.warn("Error closing existing session during reset:", e);
+       }
+       this.session = null; 
+    }
+    // Re-initialize session after a brief delay
+    setTimeout(() => {
+      this.initClient(); // Re-init client which will then re-init session
+    }, 250);
   }
 
   render() {
@@ -257,7 +303,8 @@ export class GdmLiveAudio extends LitElement {
           <button
             id="resetButton"
             @click=${this.reset}
-            ?disabled=${this.isRecording}>
+            ?disabled=${this.isRecording}
+            aria-label="Reset Session">
             <svg
               xmlns="http://www.w3.org/2000/svg"
               height="40px"
@@ -271,7 +318,8 @@ export class GdmLiveAudio extends LitElement {
           <button
             id="startButton"
             @click=${this.startRecording}
-            ?disabled=${this.isRecording}>
+            ?disabled=${this.isRecording}
+            aria-label="Start Recording">
             <svg
               viewBox="0 0 100 100"
               width="32px"
@@ -284,7 +332,8 @@ export class GdmLiveAudio extends LitElement {
           <button
             id="stopButton"
             @click=${this.stopRecording}
-            ?disabled=${!this.isRecording}>
+            ?disabled=${!this.isRecording}
+            aria-label="Stop Recording">
             <svg
               viewBox="0 0 100 100"
               width="32px"
@@ -296,7 +345,7 @@ export class GdmLiveAudio extends LitElement {
           </button>
         </div>
 
-        <div id="status"> ${this.error || this.status} </div>
+        <div id="status" role="status" aria-live="polite"> ${this.error || this.status} </div>
         <gdm-live-audio-visuals-3d
           .inputNode=${this.inputNode}
           .outputNode=${this.outputNode}></gdm-live-audio-visuals-3d>

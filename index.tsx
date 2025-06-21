@@ -136,8 +136,17 @@ export class GdmLiveAudio extends LitElement {
   private async initClient() {
     this.initAudio();
 
+    const apiKey = process.env.API_KEY;
+    if (apiKey && apiKey.length > 5) { // Basic check for presence
+      console.log('API Key found, proceeding with client initialization.');
+    } else {
+      console.error('API Key NOT found or is too short. Please check environment variables in Vercel.');
+      this.updateError('Configuration Error: API Key not found. Please ensure it is set in Vercel environment variables.');
+      return; // Stop initialization if no API key
+    }
+
     this.client = new GoogleGenAI({
-      apiKey: process.env.API_KEY,
+      apiKey: apiKey,
     });
 
     this.outputNode.connect(this.outputAudioContext.destination);
@@ -216,9 +225,13 @@ export class GdmLiveAudio extends LitElement {
               this.updateError(`Audio processing error: ${e.message || 'Unknown error'}`);
             }
           },
-          onerror: (e: ErrorEvent) => { // Consider more specific error type if available from SDK
+          onerror: (e: ErrorEvent) => { 
             console.error('Session error event:', e);
-            this.updateError(`Session Error: ${e.message || 'Unknown network or session error'}`);
+            let detailedErrorMessage = `Session Error: ${e.message || 'Unknown network or session error'}.`;
+            if (e.message && e.message.toLowerCase().includes('network error')) {
+              detailedErrorMessage += ' This can be due to internet connectivity, or issues with the API key/Google Cloud project (e.g., API not enabled, billing issues, key restrictions). Please check your connection, Vercel API_KEY, and Google Cloud project settings.';
+            }
+            this.updateError(detailedErrorMessage);
           },
           onclose: (e: CloseEvent) => {
             console.log(`Session closed. Code: ${e.code}, Reason: ${e.reason}, WasClean: ${e.wasClean}`);
@@ -235,7 +248,11 @@ export class GdmLiveAudio extends LitElement {
       });
     } catch (e: any) {
       console.error("Connection/Session Initialization Failed:", e);
-      this.updateError(`Connection failed: ${e.message || 'Unknown error during session init'}`);
+      let initErrorMessage = `Connection failed: ${e.message || 'Unknown error during session init'}.`;
+       if (e.message && e.message.toLowerCase().includes('api key not valid')) {
+        initErrorMessage += ' Please verify your API_KEY in Vercel.';
+      }
+      this.updateError(initErrorMessage);
     }
   }
 
@@ -272,7 +289,7 @@ export class GdmLiveAudio extends LitElement {
         console.log('Output AudioContext is suspended (on startRecord), attempting to resume...');
         await this.outputAudioContext.resume();
       }
-    } catch (e) {
+    } catch (e: any) {
         console.error("Error resuming audio contexts on start:", e);
         this.updateError(`Audio context resume error: ${e.message}`);
         return;
